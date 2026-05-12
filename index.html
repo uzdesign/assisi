@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Assisi — Galleria</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #111; color: #eee; min-height: 100vh; }
+  header { padding: 2rem 1.5rem 1rem; text-align: center; border-bottom: 1px solid #222; }
+  header h1 { font-weight: 300; letter-spacing: 0.1em; font-size: 1.8rem; }
+  header p { color: #888; margin-top: 0.5rem; font-size: 0.9rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px; padding: 4px; }
+  .tile { position: relative; aspect-ratio: 1; overflow: hidden; cursor: pointer; background: #1a1a1a; }
+  .tile img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s, opacity 0.3s; opacity: 0; }
+  .tile img.loaded { opacity: 1; }
+  .tile:hover img { transform: scale(1.05); }
+
+  .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,0.95); display: none; align-items: center; justify-content: center; z-index: 1000; }
+  .lightbox.open { display: flex; }
+  .lightbox img { max-width: 95vw; max-height: 88vh; object-fit: contain; }
+  .lb-controls { position: absolute; top: 1rem; right: 1rem; display: flex; gap: 0.5rem; }
+  .lb-btn { background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); padding: 0.6rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.9rem; text-decoration: none; display: inline-flex; align-items: center; gap: 0.4rem; }
+  .lb-btn:hover { background: rgba(255,255,255,0.2); }
+  .lb-nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.5); color: #fff; border: none; width: 50px; height: 50px; border-radius: 50%; font-size: 1.5rem; cursor: pointer; }
+  .lb-nav:hover { background: rgba(255,255,255,0.15); }
+  .lb-prev { left: 1rem; }
+  .lb-next { right: 1rem; }
+  .lb-caption { position: absolute; bottom: 1rem; left: 50%; transform: translateX(-50%); color: #aaa; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+  footer { text-align: center; padding: 2rem 1rem; color: #555; font-size: 0.85rem; }
+
+  .gate { position: fixed; inset: 0; background: #111; display: flex; align-items: center; justify-content: center; z-index: 2000; }
+  .gate-box { background: #1a1a1a; padding: 2.5rem 2rem; border-radius: 10px; border: 1px solid #222; max-width: 360px; width: 90%; text-align: center; }
+  .gate-box h2 { font-weight: 300; letter-spacing: 0.1em; margin-bottom: 0.3rem; }
+  .gate-box p { color: #888; font-size: 0.85rem; margin-bottom: 1.5rem; }
+  .gate-box input { width: 100%; padding: 0.7rem 1rem; border-radius: 6px; border: 1px solid #333; background: #0f0f0f; color: #eee; font-size: 1rem; margin-bottom: 0.7rem; }
+  .gate-box input:focus { outline: none; border-color: #555; }
+  .gate-box button { width: 100%; padding: 0.7rem; border-radius: 6px; border: none; background: #4a90e2; color: #fff; font-size: 0.95rem; cursor: pointer; }
+  .gate-box button:hover { background: #5aa0f2; }
+  .gate-error { color: #e25555; font-size: 0.8rem; margin-top: 0.5rem; min-height: 1em; }
+  .protected { display: none; }
+  .protected.unlocked { display: block; }
+
+  @media (max-width: 600px) {
+    .grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+    .lb-btn { padding: 0.5rem 0.7rem; font-size: 0.8rem; }
+    .lb-nav { width: 40px; height: 40px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="gate" id="gate">
+  <div class="gate-box">
+    <h2>ASSISI</h2>
+    <p>Galleria privata · inserisci la password</p>
+    <form id="gateForm">
+      <input type="password" id="gatePwd" autocomplete="current-password" autofocus>
+      <button type="submit">Entra</button>
+      <div class="gate-error" id="gateError"></div>
+    </form>
+  </div>
+</div>
+
+<div class="protected" id="content">
+
+<header>
+  <h1>ASSISI</h1>
+  <p>239 fotografie · maggio 2026</p>
+</header>
+
+<main class="grid" id="grid"></main>
+
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true">
+  <button class="lb-nav lb-prev" id="prevBtn" aria-label="Precedente">‹</button>
+  <img id="lbImage" alt="">
+  <button class="lb-nav lb-next" id="nextBtn" aria-label="Successivo">›</button>
+  <div class="lb-controls">
+    <a class="lb-btn" id="downloadBtn" href="#" download>⬇ Download HD</a>
+    <button class="lb-btn" id="closeBtn" aria-label="Chiudi">✕</button>
+  </div>
+  <div class="lb-caption" id="lbCaption"></div>
+</div>
+
+<footer>Assisi 2026 ICFR Cazzago Calino Bornato Pedrocca</footer>
+</div>
+
+<script>
+const PWD_HASH = "5ffb29e5ac072ccddda25343a9658f4f0dc1843ffad3bc4e192f8537d56c70fd";
+
+async function sha256(s) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function unlock() {
+  document.getElementById("gate").style.display = "none";
+  document.getElementById("content").classList.add("unlocked");
+  initGallery();
+}
+
+document.getElementById("gateForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const pwd = document.getElementById("gatePwd").value;
+  const hash = await sha256(pwd);
+  if (hash === PWD_HASH) {
+    sessionStorage.setItem("assisi_unlocked", "1");
+    unlock();
+  } else {
+    document.getElementById("gateError").textContent = "Password errata";
+    document.getElementById("gatePwd").select();
+  }
+});
+
+if (sessionStorage.getItem("assisi_unlocked") === "1") {
+  unlock();
+}
+
+function initGallery() {
+const CLOUD_NAME = "dkhzn56ae";
+const FOLDER = "";
+const path = id => FOLDER ? `${FOLDER}/${id}` : id;
+
+const photos = [
+  "assisi-2026-05-09-19-23-09",
+  "assisi-2026-05-09-19-23-17",
+  "assisi-2026-05-09-19-23-23",
+  "assisi-2026-05-09-19-23-31",
+  "assisi-2026-05-09-19-23-48",
+  "assisi-2026-05-09-19-23-52",
+  "assisi-2026-05-09-20-56-00",
+  "assisi-2026-05-09-20-56-05",
+  "assisi-2026-05-09-20-56-07",
+  "assisi-2026-05-09-21-04-20",
+  "assisi-2026-05-09-21-04-56",
+  "assisi-2026-05-09-21-05-16",
+  "assisi-2026-05-09-21-05-54",
+  "assisi-2026-05-09-21-06-32",
+  "assisi-2026-05-09-21-07-24",
+  "assisi-2026-05-09-21-07-43",
+  "assisi-2026-05-09-21-07-54",
+  "assisi-2026-05-09-21-08-46",
+  "assisi-2026-05-09-21-09-46",
+  "assisi-2026-05-09-21-10-04",
+  "assisi-2026-05-09-21-12-03",
+  "assisi-2026-05-09-21-14-29",
+  "assisi-2026-05-09-21-16-09",
+  "assisi-2026-05-09-21-18-21",
+  "assisi-2026-05-09-21-21-23",
+  "assisi-2026-05-09-21-21-31",
+  "assisi-2026-05-09-21-21-59",
+  "assisi-2026-05-09-21-22-22",
+  "assisi-2026-05-09-21-22-30",
+  "assisi-2026-05-09-21-22-59",
+  "assisi-2026-05-09-21-23-29",
+  "assisi-2026-05-09-21-25-02",
+  "assisi-2026-05-09-21-25-07",
+  "assisi-2026-05-09-21-26-11",
+  "assisi-2026-05-09-21-47-38",
+  "assisi-2026-05-09-21-48-27",
+  "assisi-2026-05-10-08-15-48",
+  "assisi-2026-05-10-08-15-57",
+  "assisi-2026-05-10-08-19-32",
+  "assisi-2026-05-10-08-19-43",
+  "assisi-2026-05-10-08-20-31",
+  "assisi-2026-05-10-08-22-18",
+  "assisi-2026-05-10-08-23-08",
+  "assisi-2026-05-10-08-24-14",
+  "assisi-2026-05-10-08-25-32",
+  "assisi-2026-05-10-08-27-43",
+  "assisi-2026-05-10-08-29-00",
+  "assisi-2026-05-10-08-29-44",
+  "assisi-2026-05-10-08-29-59",
+  "assisi-2026-05-10-08-30-13",
+  "assisi-2026-05-10-08-31-03",
+  "assisi-2026-05-10-08-35-51",
+  "assisi-2026-05-10-08-37-31",
+  "assisi-2026-05-10-08-38-11",
+  "assisi-2026-05-10-08-38-20",
+  "assisi-2026-05-10-08-38-28",
+  "assisi-2026-05-10-08-38-37",
+  "assisi-2026-05-10-08-38-43",
+  "assisi-2026-05-10-08-41-36",
+  "assisi-2026-05-10-08-43-52",
+  "assisi-2026-05-10-08-45-27",
+  "assisi-2026-05-10-08-45-45",
+  "assisi-2026-05-10-08-51-39",
+  "assisi-2026-05-10-08-51-58",
+  "assisi-2026-05-10-08-55-08",
+  "assisi-2026-05-10-08-55-24",
+  "assisi-2026-05-10-08-55-31",
+  "assisi-2026-05-10-08-55-52",
+  "assisi-2026-05-10-08-57-15",
+  "assisi-2026-05-10-08-58-52",
+  "assisi-2026-05-10-09-03-51",
+  "assisi-2026-05-10-09-09-18",
+  "assisi-2026-05-10-09-09-39",
+  "assisi-2026-05-10-09-18-55",
+  "assisi-2026-05-10-09-23-28",
+  "assisi-2026-05-10-09-25-03",
+  "assisi-2026-05-10-10-46-45",
+  "assisi-2026-05-10-10-46-54",
+  "assisi-2026-05-10-10-47-12",
+  "assisi-2026-05-10-10-47-16",
+  "assisi-2026-05-10-10-52-23",
+  "assisi-2026-05-10-10-52-56",
+  "assisi-2026-05-10-10-53-06",
+  "assisi-2026-05-10-11-08-04",
+  "assisi-2026-05-10-11-08-20",
+  "assisi-2026-05-10-11-08-35",
+  "assisi-2026-05-10-11-08-42",
+  "assisi-2026-05-10-11-08-47",
+  "assisi-2026-05-10-11-09-04",
+  "assisi-2026-05-10-11-26-29",
+  "assisi-2026-05-10-11-26-44",
+  "assisi-2026-05-10-11-26-49",
+  "assisi-2026-05-10-11-26-50",
+  "assisi-2026-05-10-14-37-04",
+  "assisi-2026-05-10-14-40-41",
+  "assisi-2026-05-10-14-40-53",
+  "assisi-2026-05-10-14-49-46",
+  "assisi-2026-05-10-14-53-27",
+  "assisi-2026-05-10-14-58-46",
+  "assisi-2026-05-10-15-08-02",
+  "assisi-2026-05-10-15-10-59",
+  "assisi-2026-05-10-15-11-04",
+  "assisi-2026-05-10-15-12-04",
+  "assisi-2026-05-10-15-12-59",
+  "assisi-2026-05-10-15-15-18",
+  "assisi-2026-05-10-15-16-03",
+  "assisi-2026-05-10-15-17-32",
+  "assisi-2026-05-10-15-17-38",
+  "assisi-2026-05-10-15-21-18",
+  "assisi-2026-05-10-15-24-52",
+  "assisi-2026-05-10-15-27-12",
+  "assisi-2026-05-10-15-27-21",
+  "assisi-2026-05-10-15-29-36",
+  "assisi-2026-05-10-15-30-48",
+  "assisi-2026-05-10-15-31-47",
+  "assisi-2026-05-10-15-32-50",
+  "assisi-2026-05-10-15-51-25",
+  "assisi-2026-05-10-15-51-46",
+  "assisi-2026-05-10-15-53-59",
+  "assisi-2026-05-10-15-59-56",
+  "assisi-2026-05-10-16-05-24",
+  "assisi-2026-05-10-16-05-37",
+  "assisi-2026-05-10-16-05-50",
+  "assisi-2026-05-10-16-09-13",
+  "assisi-2026-05-10-16-09-23",
+  "assisi-2026-05-10-16-10-10",
+  "assisi-2026-05-10-16-12-41",
+  "assisi-2026-05-10-16-12-54",
+  "assisi-2026-05-10-16-14-12",
+  "assisi-2026-05-10-16-14-20",
+  "assisi-2026-05-10-16-15-00",
+  "assisi-2026-05-10-16-19-53",
+  "assisi-2026-05-10-16-22-12",
+  "assisi-2026-05-10-16-25-47",
+  "assisi-2026-05-10-16-40-17",
+  "assisi-2026-05-10-16-40-51",
+  "assisi-2026-05-10-16-41-04",
+  "assisi-2026-05-10-16-41-22",
+  "assisi-2026-05-10-16-41-44",
+  "assisi-2026-05-10-16-45-30",
+  "assisi-2026-05-10-17-41-25",
+  "assisi-2026-05-10-17-41-45",
+  "assisi-2026-05-10-20-46-32",
+  "assisi-2026-05-10-20-50-27",
+  "assisi-2026-05-10-20-51-48",
+  "assisi-2026-05-10-20-54-44",
+  "assisi-2026-05-10-20-55-15",
+  "assisi-2026-05-10-20-56-04",
+  "assisi-2026-05-10-21-04-55",
+  "assisi-2026-05-10-21-08-35",
+  "assisi-2026-05-10-21-08-46",
+  "assisi-2026-05-11-08-06-34",
+  "assisi-2026-05-11-08-06-42",
+  "assisi-2026-05-11-08-07-02",
+  "assisi-2026-05-11-08-10-24",
+  "assisi-2026-05-11-08-12-12",
+  "assisi-2026-05-11-08-12-53",
+  "assisi-2026-05-11-08-14-37",
+  "assisi-2026-05-11-08-15-36",
+  "assisi-2026-05-11-08-16-26",
+  "assisi-2026-05-11-08-27-36",
+  "assisi-2026-05-11-08-39-40",
+  "assisi-2026-05-11-08-39-51",
+  "assisi-2026-05-11-10-00-25",
+  "assisi-2026-05-11-10-05-36",
+  "assisi-2026-05-11-10-05-45",
+  "assisi-2026-05-11-10-06-33",
+  "assisi-2026-05-11-10-06-59",
+  "assisi-2026-05-11-10-08-41",
+  "assisi-2026-05-11-10-11-58",
+  "assisi-2026-05-11-10-13-41",
+  "assisi-2026-05-11-10-14-36",
+  "assisi-2026-05-11-10-15-42",
+  "assisi-2026-05-11-10-15-51",
+  "assisi-2026-05-11-10-16-41",
+  "assisi-2026-05-11-10-17-24",
+  "assisi-2026-05-11-10-18-06",
+  "assisi-2026-05-11-10-21-46",
+  "assisi-2026-05-11-10-22-59",
+  "assisi-2026-05-11-10-23-10",
+  "assisi-2026-05-11-10-23-29",
+  "assisi-2026-05-11-10-24-02",
+  "assisi-2026-05-11-10-27-55",
+  "assisi-2026-05-11-10-29-38",
+  "assisi-2026-05-11-10-31-12",
+  "assisi-2026-05-11-10-31-38",
+  "assisi-2026-05-11-10-31-56",
+  "assisi-2026-05-11-10-52-38",
+  "assisi-2026-05-11-11-23-22",
+  "assisi-2026-05-11-11-23-23",
+  "assisi-2026-05-11-11-31-36",
+  "assisi-2026-05-11-11-32-27",
+  "assisi-2026-05-11-11-33-35",
+  "assisi-2026-05-11-11-33-46",
+  "assisi-2026-05-11-11-43-32",
+  "assisi-2026-05-11-11-57-06",
+  "assisi-2026-05-11-11-58-16",
+  "assisi-2026-05-11-11-58-38",
+  "assisi-2026-05-11-11-59-04",
+  "assisi-2026-05-11-11-59-06",
+  "assisi-2026-05-11-12-00-41",
+  "assisi-2026-05-11-12-00-51",
+  "assisi-2026-05-11-12-01-36",
+  "assisi-2026-05-11-12-06-50",
+  "assisi-2026-05-11-12-08-04",
+  "assisi-2026-05-11-12-09-58",
+  "assisi-2026-05-11-12-11-39",
+  "assisi-2026-05-11-12-14-40",
+  "assisi-2026-05-11-12-15-03",
+  "assisi-2026-05-11-12-15-12",
+  "assisi-2026-05-11-12-15-51",
+  "assisi-2026-05-11-12-16-01",
+  "assisi-2026-05-11-12-16-56",
+  "assisi-2026-05-11-13-20-31",
+  "assisi-2026-05-11-13-20-35",
+  "assisi-2026-05-11-13-34-35",
+  "assisi-2026-05-11-14-26-51",
+  "assisi-2026-05-11-14-28-21",
+  "assisi-2026-05-11-14-29-03",
+  "assisi-2026-05-11-14-33-23",
+  "assisi-2026-05-11-14-34-17",
+  "assisi-2026-05-11-14-36-14",
+  "assisi-2026-05-11-14-38-16",
+  "assisi-2026-05-11-14-38-28",
+  "assisi-2026-05-11-14-38-46",
+  "assisi-2026-05-11-14-40-01",
+  "assisi-2026-05-11-14-40-28",
+  "assisi-2026-05-11-14-41-12",
+  "assisi-2026-05-11-14-42-20",
+  "assisi-2026-05-11-14-43-04",
+  "assisi-2026-05-11-14-48-08",
+  "assisi-2026-05-11-14-49-47",
+  "assisi-2026-05-11-14-50-28",
+  "assisi-2026-05-11-14-50-52",
+  "assisi-2026-05-11-14-50-59",
+  "assisi-2026-05-11-14-51-20",
+  "assisi-2026-05-11-14-51-52",
+  "assisi-2026-05-11-14-53-10",
+  "assisi-2026-05-11-14-53-34"
+];
+
+const url = (id, transform) =>
+  `https://res.cloudinary.com/${CLOUD_NAME}/image/upload/${transform}/${path(id)}.jpg`;
+
+const thumb = id => url(id, "w_400,h_400,c_fill,q_auto,f_auto");
+const preview = id => url(id, "w_1600,q_auto,f_auto");
+const download = id => `https://res.cloudinary.com/${CLOUD_NAME}/image/upload/fl_attachment/${path(id)}.jpg`;
+
+const grid = document.getElementById("grid");
+const lightbox = document.getElementById("lightbox");
+const lbImage = document.getElementById("lbImage");
+const lbCaption = document.getElementById("lbCaption");
+const downloadBtn = document.getElementById("downloadBtn");
+
+let currentIndex = 0;
+
+photos.forEach((id, idx) => {
+  const tile = document.createElement("div");
+  tile.className = "tile";
+  const img = document.createElement("img");
+  img.loading = "lazy";
+  img.src = thumb(id);
+  img.alt = id;
+  img.onload = () => img.classList.add("loaded");
+  tile.appendChild(img);
+  tile.addEventListener("click", () => openLightbox(idx));
+  grid.appendChild(tile);
+});
+
+function openLightbox(idx) {
+  currentIndex = idx;
+  updateLightbox();
+  lightbox.classList.add("open");
+  document.body.style.overflow = "hidden";
+}
+
+function closeLightbox() {
+  lightbox.classList.remove("open");
+  document.body.style.overflow = "";
+}
+
+function updateLightbox() {
+  const id = photos[currentIndex];
+  lbImage.src = preview(id);
+  lbImage.alt = id;
+  downloadBtn.href = download(id);
+  downloadBtn.setAttribute("download", id + ".jpg");
+  lbCaption.textContent = `${currentIndex + 1} / ${photos.length} · ${id}`;
+}
+
+function next() { currentIndex = (currentIndex + 1) % photos.length; updateLightbox(); }
+function prev() { currentIndex = (currentIndex - 1 + photos.length) % photos.length; updateLightbox(); }
+
+document.getElementById("nextBtn").addEventListener("click", next);
+document.getElementById("prevBtn").addEventListener("click", prev);
+document.getElementById("closeBtn").addEventListener("click", closeLightbox);
+lightbox.addEventListener("click", e => { if (e.target === lightbox) closeLightbox(); });
+
+document.addEventListener("keydown", e => {
+  if (!lightbox.classList.contains("open")) return;
+  if (e.key === "Escape") closeLightbox();
+  else if (e.key === "ArrowRight") next();
+  else if (e.key === "ArrowLeft") prev();
+});
+}
+</script>
+</body>
+</html>

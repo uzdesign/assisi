@@ -16,9 +16,15 @@
   .tile img.loaded { opacity: 1; }
   .tile:hover img { transform: scale(1.05); }
 
-  .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,0.95); display: none; align-items: center; justify-content: center; z-index: 1000; }
-  .lightbox.open { display: flex; }
-  .lightbox img { max-width: 95vw; max-height: 88vh; object-fit: contain; }
+  .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,0.95); display: none; align-items: center; justify-content: center; z-index: 1000; opacity: 0; transition: opacity 0.25s ease; }
+  .lightbox.open { display: flex; opacity: 1; }
+  .lightbox img { max-width: 95vw; max-height: 88vh; object-fit: contain; touch-action: pan-y; user-select: none; -webkit-user-drag: none; transform: scale(0.92); opacity: 0; transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s ease; will-change: transform, opacity; }
+  .lightbox.open img.shown { transform: scale(1); opacity: 1; }
+  .lightbox img.swiping { transition: none; }
+  .lightbox img.exit-left { transform: translateX(-100vw) scale(0.9); opacity: 0; transition: transform 0.2s ease-out, opacity 0.2s ease-out; }
+  .lightbox img.exit-right { transform: translateX(100vw) scale(0.9); opacity: 0; transition: transform 0.2s ease-out, opacity 0.2s ease-out; }
+  .lightbox img.enter-left { transform: translateX(-100vw) scale(0.9); opacity: 0; transition: none; }
+  .lightbox img.enter-right { transform: translateX(100vw) scale(0.9); opacity: 0; transition: none; }
   .lb-controls { position: absolute; top: 1rem; right: 1rem; display: flex; gap: 0.5rem; }
   .lb-btn { background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); padding: 0.6rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.9rem; text-decoration: none; display: inline-flex; align-items: center; gap: 0.4rem; }
   .lb-btn:hover { background: rgba(255,255,255,0.2); }
@@ -400,32 +406,120 @@ function openLightbox(idx) {
 
 function closeLightbox() {
   lightbox.classList.remove("open");
+  lbImage.classList.remove("shown");
   document.body.style.overflow = "";
 }
 
-function updateLightbox() {
+function updateLightbox(direction) {
   const id = photos[currentIndex];
+  lbImage.classList.remove("shown", "swiping", "exit-left", "exit-right", "enter-left", "enter-right");
+  if (direction === "next") lbImage.classList.add("enter-right");
+  else if (direction === "prev") lbImage.classList.add("enter-left");
+  lbImage.style.transform = "";
   lbImage.src = preview(id);
   lbImage.alt = id;
   downloadBtn.href = download(id);
   downloadBtn.setAttribute("download", id + ".jpg");
   lbCaption.textContent = `${currentIndex + 1} / ${photos.length} · ${id}`;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      lbImage.classList.remove("enter-left", "enter-right");
+      lbImage.classList.add("shown");
+    });
+  });
 }
 
-function next() { currentIndex = (currentIndex + 1) % photos.length; updateLightbox(); }
-function prev() { currentIndex = (currentIndex - 1 + photos.length) % photos.length; updateLightbox(); }
+function next(animate) {
+  if (animate) {
+    lbImage.classList.add("exit-left");
+    setTimeout(() => {
+      currentIndex = (currentIndex + 1) % photos.length;
+      updateLightbox("next");
+    }, 180);
+  } else {
+    currentIndex = (currentIndex + 1) % photos.length;
+    updateLightbox("next");
+  }
+}
 
-document.getElementById("nextBtn").addEventListener("click", next);
-document.getElementById("prevBtn").addEventListener("click", prev);
+function prev(animate) {
+  if (animate) {
+    lbImage.classList.add("exit-right");
+    setTimeout(() => {
+      currentIndex = (currentIndex - 1 + photos.length) % photos.length;
+      updateLightbox("prev");
+    }, 180);
+  } else {
+    currentIndex = (currentIndex - 1 + photos.length) % photos.length;
+    updateLightbox("prev");
+  }
+}
+
+document.getElementById("nextBtn").addEventListener("click", () => next(true));
+document.getElementById("prevBtn").addEventListener("click", () => prev(true));
 document.getElementById("closeBtn").addEventListener("click", closeLightbox);
 lightbox.addEventListener("click", e => { if (e.target === lightbox) closeLightbox(); });
 
 document.addEventListener("keydown", e => {
   if (!lightbox.classList.contains("open")) return;
   if (e.key === "Escape") closeLightbox();
-  else if (e.key === "ArrowRight") next();
-  else if (e.key === "ArrowLeft") prev();
+  else if (e.key === "ArrowRight") next(true);
+  else if (e.key === "ArrowLeft") prev(true);
 });
+
+let touchStartX = 0, touchStartY = 0, touchDeltaX = 0, touchDeltaY = 0, dragging = false, lockedAxis = null;
+const SWIPE_THRESHOLD = 60;
+const VELOCITY_THRESHOLD = 0.4;
+let touchStartTime = 0;
+
+function onPointerDown(x, y) {
+  touchStartX = x; touchStartY = y;
+  touchDeltaX = 0; touchDeltaY = 0;
+  dragging = true; lockedAxis = null;
+  touchStartTime = Date.now();
+  lbImage.classList.add("swiping");
+}
+
+function onPointerMove(x, y) {
+  if (!dragging) return;
+  touchDeltaX = x - touchStartX;
+  touchDeltaY = y - touchStartY;
+  if (!lockedAxis && (Math.abs(touchDeltaX) > 8 || Math.abs(touchDeltaY) > 8)) {
+    lockedAxis = Math.abs(touchDeltaX) > Math.abs(touchDeltaY) ? "x" : "y";
+  }
+  if (lockedAxis === "x") {
+    lbImage.style.transform = `translateX(${touchDeltaX}px) scale(${1 - Math.min(Math.abs(touchDeltaX) / 2000, 0.1)})`;
+    lbImage.style.opacity = String(1 - Math.min(Math.abs(touchDeltaX) / 800, 0.4));
+  }
+}
+
+function onPointerUp() {
+  if (!dragging) return;
+  dragging = false;
+  lbImage.classList.remove("swiping");
+  const dt = Date.now() - touchStartTime;
+  const velocity = Math.abs(touchDeltaX) / Math.max(dt, 1);
+  if (lockedAxis === "x" && (Math.abs(touchDeltaX) > SWIPE_THRESHOLD || velocity > VELOCITY_THRESHOLD)) {
+    lbImage.style.transform = "";
+    lbImage.style.opacity = "";
+    if (touchDeltaX < 0) next(true); else prev(true);
+  } else {
+    lbImage.style.transform = "";
+    lbImage.style.opacity = "";
+  }
+}
+
+lbImage.addEventListener("touchstart", e => onPointerDown(e.touches[0].clientX, e.touches[0].clientY), { passive: true });
+lbImage.addEventListener("touchmove", e => {
+  onPointerMove(e.touches[0].clientX, e.touches[0].clientY);
+  if (lockedAxis === "x") e.preventDefault();
+}, { passive: false });
+lbImage.addEventListener("touchend", onPointerUp);
+lbImage.addEventListener("touchcancel", onPointerUp);
+
+lbImage.addEventListener("mousedown", e => { e.preventDefault(); onPointerDown(e.clientX, e.clientY); });
+window.addEventListener("mousemove", e => { if (dragging) onPointerMove(e.clientX, e.clientY); });
+window.addEventListener("mouseup", onPointerUp);
 }
 </script>
 </body>
